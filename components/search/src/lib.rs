@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 
 use libs::ammonia;
 use libs::elasticlunr::{lang, Index, IndexBuilder};
@@ -8,7 +7,6 @@ use libs::once_cell::sync::Lazy;
 use config::{Config, Search};
 use content::{Library, Section};
 use errors::{bail, Result};
-use libs::ahash::AHashMap;
 
 pub const ELASTICLUNR_JS: &str = include_str!("elasticlunr.min.js");
 
@@ -133,7 +131,7 @@ pub fn build_index(lang: &str, library: &Library, config: &Config) -> Result<Str
 
     for (_, section) in &library.sections {
         if section.lang == lang {
-            add_section_to_index(&mut index, section, library, &language_options.search, lang);
+            add_section_to_index(&mut index, section, library, &language_options.search);
         }
     }
 
@@ -145,7 +143,6 @@ fn add_section_to_index(
     section: &Section,
     library: &Library,
     search_config: &Search,
-    lang: &str,
 ) {
     if !section.meta.in_search_index {
         return;
@@ -169,8 +166,15 @@ fn add_section_to_index(
 
     for key in &section.pages {
         let page = &library.pages[key];
-
-        let (categories, tags) = get_categories_and_tags(&library, &page.permalink, lang);
+        let mut categories = vec![];
+        let mut tags = vec![];
+        for (taxonomy, values) in page.meta.taxonomies.clone().into_iter() {
+            if taxonomy == "categories" {
+                categories = values;
+            } else  if taxonomy == "tags" {
+                tags = values;
+            }
+        }
 
         if !page.meta.in_search_index {
             continue;
@@ -188,39 +192,6 @@ fn add_section_to_index(
                 tags,
             ),
         );
-    }
-}
-
-fn get_categories_and_tags(
-    library: &Library,
-    permalink: &str,
-    lang: &str,
-) -> (Vec<String>, Vec<String>) {
-    let mut categories = vec![];
-    let mut tags = vec![];
-    let segments: Vec<&str> = permalink.trim_end_matches('/').rsplit('/').collect();
-    if let Some(url_segment) = segments.get(0).copied() {
-        if let Some(taxonomies) = library.taxonomies_def.get(lang) {
-            if let Some(category_taxonomies) = taxonomies.get("categories") {
-                match_file_stem_to_url_segment(&mut categories, url_segment, category_taxonomies);
-            }
-            if let Some(tag_taxonomies) = taxonomies.get("tags") {
-                match_file_stem_to_url_segment(&mut tags, url_segment, tag_taxonomies);
-            }
-        }
-    }
-    (categories, tags)
-}
-
-fn match_file_stem_to_url_segment(output: &mut Vec<String>, url_segment: &str, taxonomies: &AHashMap<String, Vec<PathBuf>>) {
-    for (taxonomy, file_paths) in taxonomies.iter() {
-        for path_buffer in file_paths.iter() {
-            if let Some(stem) = path_buffer.as_path().file_stem().map(|stem| stem.to_string_lossy().to_string()) {
-                if url_segment == stem.as_str() {
-                    output.push(taxonomy.to_string());
-                }
-            }
-        }
     }
 }
 
