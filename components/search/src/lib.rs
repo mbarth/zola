@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use libs::ammonia;
 use libs::elasticlunr::{lang, Index, IndexBuilder};
@@ -7,6 +8,7 @@ use libs::once_cell::sync::Lazy;
 use config::{Config, Search};
 use content::{Library, Section};
 use errors::{bail, Result};
+use libs::ahash::AHashMap;
 
 pub const ELASTICLUNR_JS: &str = include_str!("elasticlunr.min.js");
 
@@ -42,7 +44,15 @@ fn build_fields(search_config: &Search, mut index: IndexBuilder) -> IndexBuilder
     }
 
     if search_config.include_content {
-        index = index.add_field("body")
+        index = index.add_field("body");
+    }
+
+    if search_config.include_tags {
+        index = index.add_field("tags");
+    }
+
+    if search_config.include_categories {
+        index = index.add_field("categories");
     }
 
     index
@@ -61,6 +71,8 @@ fn fill_index(
     description: &Option<String>,
     path: &str,
     content: &str,
+    categories: Vec<String>,
+    tags: Vec<String>,
 ) -> Vec<String> {
     let mut row = vec![];
 
@@ -90,6 +102,16 @@ fn fill_index(
         };
     }
 
+    if search_config.include_tags {
+        let tags = tags.join(" ");
+        row.push(tags);
+    }
+
+    if search_config.include_categories {
+        let categories = categories.join(" ");
+        row.push(categories);
+    }
+
     row
 }
 
@@ -111,7 +133,7 @@ pub fn build_index(lang: &str, library: &Library, config: &Config) -> Result<Str
 
     for (_, section) in &library.sections {
         if section.lang == lang {
-            add_section_to_index(&mut index, section, library, &language_options.search);
+            add_section_to_index(&mut index, section, library, &language_options.search, lang);
         }
     }
 
@@ -123,6 +145,7 @@ fn add_section_to_index(
     section: &Section,
     library: &Library,
     search_config: &Search,
+    lang: &str,
 ) {
     if !section.meta.in_search_index {
         return;
@@ -138,12 +161,17 @@ fn add_section_to_index(
                 &section.meta.description,
                 &section.path,
                 &section.content,
+                vec![],
+                vec![],
             ),
         );
     }
 
     for key in &section.pages {
         let page = &library.pages[key];
+
+        let (categories, tags) = get_categories_and_tags(&library, &page.permalink, lang);
+
         if !page.meta.in_search_index {
             continue;
         }
@@ -156,8 +184,43 @@ fn add_section_to_index(
                 &page.meta.description,
                 &page.path,
                 &page.content,
+                categories,
+                tags,
             ),
         );
+    }
+}
+
+fn get_categories_and_tags(
+    library: &Library,
+    permalink: &str,
+    lang: &str,
+) -> (Vec<String>, Vec<String>) {
+    let mut categories = vec![];
+    let mut tags = vec![];
+    let segments: Vec<&str> = permalink.trim_end_matches('/').rsplit('/').collect();
+    if let Some(url_segment) = segments.get(0).copied() {
+        if let Some(taxonomies) = library.taxonomies_def.get(lang) {
+            if let Some(category_taxonomies) = taxonomies.get("categories") {
+                match_file_stem_to_url_segment(&mut categories, url_segment, category_taxonomies);
+            }
+            if let Some(tag_taxonomies) = taxonomies.get("tags") {
+                match_file_stem_to_url_segment(&mut tags, url_segment, tag_taxonomies);
+            }
+        }
+    }
+    (categories, tags)
+}
+
+fn match_file_stem_to_url_segment(output: &mut Vec<String>, url_segment: &str, taxonomies: &AHashMap<String, Vec<PathBuf>>) {
+    for (taxonomy, file_paths) in taxonomies.iter() {
+        for path_buffer in file_paths.iter() {
+            if let Some(stem) = path_buffer.as_path().file_stem().map(|stem| stem.to_string_lossy().to_string()) {
+                if url_segment == stem.as_str() {
+                    output.push(taxonomy.to_string());
+                }
+            }
+        }
     }
 }
 
@@ -195,7 +258,7 @@ mod tests {
         let path = "/a/page/".to_string();
         let content = "Some content".to_string();
 
-        let res = fill_index(&config.search, &title, &description, &path, &content);
+        let res = fill_index(&config.search, &title, &description, &path, &content, vec![], vec![]);
         assert_eq!(res.len(), 2);
         assert_eq!(res[0], title.unwrap());
         assert_eq!(res[1], content);
@@ -210,7 +273,7 @@ mod tests {
         let path = "/a/page/".to_string();
         let content = "Some content".to_string();
 
-        let res = fill_index(&config.search, &title, &description, &path, &content);
+        let res = fill_index(&config.search, &title, &description, &path, &content, vec![], vec![]);
         assert_eq!(res.len(), 3);
         assert_eq!(res[0], title.unwrap());
         assert_eq!(res[1], description.unwrap());
@@ -226,7 +289,7 @@ mod tests {
         let path = "/a/page/".to_string();
         let content = "Some content".to_string();
 
-        let res = fill_index(&config.search, &title, &description, &path, &content);
+        let res = fill_index(&config.search, &title, &description, &path, &content, vec![], vec![]);
         assert_eq!(res.len(), 2);
         assert_eq!(res[0], title.unwrap());
         assert_eq!(res[1], content[..5]);

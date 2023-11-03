@@ -26,6 +26,10 @@ pub struct Search {
     /// Includes the description in the search index. When the site becomes too large, you can switch
     /// to that instead. `false` by default
     pub include_description: bool,
+    /// Index categories
+    pub include_categories: bool,
+    /// Index tags
+    pub include_tags: bool,
     /// Include the path of the page in the search index. `false` by default.
     pub include_path: bool,
     /// Foramt of the search index to be produced. Javascript by default
@@ -38,6 +42,8 @@ impl Default for Search {
             include_title: true,
             include_content: true,
             include_description: false,
+            include_categories: false,
+            include_tags: false,
             include_path: false,
             truncate_content_length: None,
             index_format: Default::default(),
